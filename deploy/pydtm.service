@@ -1,0 +1,12 @@
+[Unit]
+Description=pydtm - Python (Euro)DOCSIS Traffic Meter
+After=syslog.target network.target
+
+[Service]
+User=pydtm
+EnvironmentFile=/etc/pydtm.env
+ExecStart=/usr/bin/pydtm
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

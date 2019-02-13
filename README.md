@@ -21,17 +21,23 @@ is supported by your kernel and it's driver complies with the DVBv5 API.
 
 ## FAQ
 
-### How does this work?
+### How and why does this even  work?
 
 EuroDOCSIS 3.0 uses standard DVB-C mechanisms to transport it's data: It's
-encoded as a standard MPEG Transport Stream on [PID](https://en.wikipedia.org/wiki/MPEG_transport_stream#Packet_Identifier_\(PID\))
-8190 with either 64- or 256-[QAM](https://en.wikipedia.org/wiki/QAM_\(television\))
+encoded as a standard MPEG Transport Stream on
+[PID](https://en.wikipedia.org/wiki/MPEG_transport_stream#Packet_Identifier_\(PID\))
+8190 with either 64- or 256-
+[QAM](https://en.wikipedia.org/wiki/QAM_\(television\))
 modulation with a symbol rate of 6952ksyms/s. Since cable is a shared medium,
 determining the total amount of data transferred and comparing this to the total
 amount possible after
 [FEC](https://en.wikipedia.org/wiki/Forward_error_correction) (which is about
 51Mbit/s for 256-QAM and 34 MBit/s for 64-QAM) will show you how much capacity
 is used.
+
+# How do I determine downstream frequencies?
+
+Take a look at your cable modem's management pages.
 
 ### Wait, I can read my neighbours data with this?
 
@@ -44,3 +50,8 @@ I wanted to learn Python.
 ### Why output data to UDP? Why not text files, sockets, ...?
 
 You can easily use tools like `netcat` to capture the data.
+
+### This is downstream only, right?
+
+Yes. You would probably not see other cable modems upstream signals due to...
+erm, "electrical" stuff.

@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 # Python (Euro)DOCSIS Traffic Meter
-# Copyright (C) 2018 Stefan Förster
+# Copyright (C) 2018 the contributors
 
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by

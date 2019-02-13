@@ -24,10 +24,8 @@ is supported by your kernel and it's driver complies with the DVBv5 API.
 ### How does this work?
 
 EuroDOCSIS 3.0 uses standard DVB-C mechanisms to transport it's data: It's
-encoded as a standard MPEG Transport Stream on [PID]
-(https://en.wikipedia.org/wiki/MPEG_transport_stream#Packet_Identifier_\(PID\))
-8190 with either 64- or 256-[QAM]
-(https://en.wikipedia.org/wiki/QAM_\(television\))
+encoded as a standard MPEG Transport Stream on [PID](https://en.wikipedia.org/wiki/MPEG_transport_stream#Packet_Identifier_\(PID\))
+8190 with either 64- or 256-[QAM](https://en.wikipedia.org/wiki/QAM_\(television\))
 modulation with a symbol rate of 6952ksyms/s. Since cable is a shared medium,
 determining the total amount of data transferred and comparing this to the total
 amount possible after

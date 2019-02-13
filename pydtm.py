@@ -319,13 +319,13 @@ def main():
     logger.debug('about to open adapter {}, tuner {} devices'.format(adapter, tuner))
     adapter = '/dev/dvb/adapter' + str(adapter)
     try:
-        fefd =  open(adapter + '/frontend' + str(tuner), 'r+') 
-        dmxfd = open(adapter +'/demux'     + str(tuner), 'r+') 
-        dvrfd = open(adapter +'/dvr'       + str(tuner), 'r') 
-    except Exception, err:
+        fefd =  open(adapter + '/frontend' + str(tuner), 'r+')
+        dmxfd = open(adapter +'/demux'     + str(tuner), 'r+')
+        dvrfd = open(adapter +'/dvr'       + str(tuner), 'rb')
+    except Exception as err:
         logger.error('Unable to open devices, aborting. Stacktrace was: ' + traceback.format_exc())
         exit(1)
-        
+
     # the demux device needs to be opened non blocking
     flag = fcntl.fcntl(dvrfd, fcntl.F_GETFL)
     fcntl.fcntl(dvrfd, fcntl.F_SETFL, flag | os.O_NONBLOCK)
@@ -411,7 +411,7 @@ def main():
         # send data
         for cm in carbon_messages:
             logger.debug('sending to carbon: {}'.format(cm))
-            sock.sendto(cm + '\n', carbon)
+            sock.sendto((cm + '\n').encode(), carbon)
 
     # close devices
     # TODO: this will actually never be called, right?

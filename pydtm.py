@@ -108,12 +108,12 @@ class dmx_pes_filter_params(ctypes.Structure):
 
 
 def init_logging():
-    logger.setLevel(logging.DEBUG)
+    LOGGER.setLevel(logging.DEBUG)
     log_handler = logging.StreamHandler()
     log_handler.setLevel(logging.DEBUG)
     formatter = logging.Formatter("%(levelname)s: %(message)s")
     log_handler.setFormatter(formatter)
-    logger.addHandler(log_handler)
+    LOGGER.addHandler(log_handler)
 
 def build_configuration():
     # parse command line arguments
@@ -143,37 +143,37 @@ def build_configuration():
 
     # overwrite with environment values
     if "PYDTM_ADAPTER" in os.environ:
-        logger.debug("reading adapter from environment")
+        LOGGER.debug("reading adapter from environment")
         try:
             args.adapter = int(os.environ["PYDTM_ADAPTER"])
-        except:
-            logger.error("error parsing PYDTM_ADAPTER value %s as integer, using %d instead",
+        except ValueError:
+            LOGGER.error("error parsing PYDTM_ADAPTER value %s as integer, using %d instead",
                          os.environ["PYDTM_ADAPTER"], args.adapter)
     if "PYDTM_CARBON" in os.environ:
-        logger.debug("reading carbon sink from environment")
+        LOGGER.debug("reading carbon sink from environment")
         args.carbon = os.environ["PYDTM_CARBON"]
     if "PYDTM_DEBUG" in os.environ:
-        logger.debug("reading debug flag from environment")
+        LOGGER.debug("reading debug flag from environment")
         args.debug = True
     if "PYDTM_FREQUENCIES" in os.environ:
-        logger.debug("reading frequency list from environment")
+        LOGGER.debug("reading frequency list from environment")
         args.frequencies = os.environ["PYDTM_FREQUENCIES"]
     if "PYDTM_PREFIX" in os.environ:
-        logger.debug("reading carbon prefix/tree location from environment")
+        LOGGER.debug("reading carbon prefix/tree location from environment")
         args.frequencies = os.environ["PYDTM_PREFIX"]
     if "PYDTM_STEP" in os.environ:
-        logger.debug("reading metrics store resolution from environment")
+        LOGGER.debug("reading metrics store resolution from environment")
         try:
             args.step = int(os.environ["PYDTM_STEP"])
-        except:
-            logger.error("error parsing PYDTM_STEP value %s as integer, using %d instead",
+        except ValueError:
+            LOGGER.error("error parsing PYDTM_STEP value %s as integer, using %d instead",
                          os.environ["PYDTM_STEP"], args.step)
     if "PYDTM_TUNER" in os.environ:
-        logger.debug("reading tuner from environment")
+        LOGGER.debug("reading tuner from environment")
         try:
             args.adapter = int(os.environ["PYDTM_TUNER"])
-        except:
-            logger.error("error parsing PYDTM_TUNER value %s as integer, using %d instead",
+        except ValueError:
+            LOGGER.error("error parsing PYDTM_TUNER value %s as integer, using %d instead",
                          os.environ["PYDTM_TUNER"], args.tuner)
 
     # generate a list of frequencies
@@ -182,25 +182,25 @@ def build_configuration():
         if freq.find(":") < 0:
             try:
                 frequencies.append((int(freq), QAM_256))
-            except:
-                logger.critical("error parsing frequency %s as integer, aborting", freq)
+            except ValueError:
+                LOGGER.critical("error parsing frequency %s as integer, aborting", freq)
                 exit(1)
-            logger.debug("added frequency %sMHz", freq)
+            LOGGER.debug("added frequency %sMHz", freq)
         else:
             freq, mod = freq.split(":")
             try:
                 freq = int(freq)
-            except:
-                logger.critical("error parsing frequency %s as string, aborting", freq)
+            except ValueError:
+                LOGGER.critical("error parsing frequency %s as string, aborting", freq)
                 exit(1)
             if mod == "256":
-                logger.debug("adding frequency %sMHz with modulation QAM_%s", freq, mod)
+                LOGGER.debug("adding frequency %sMHz with modulation QAM_%s", freq, mod)
                 frequencies.append((freq, QAM_256))
             elif mod == "64":
-                logger.debug("adding frequency %sMHz with modulation QAM_%s", freq, mod)
+                LOGGER.debug("adding frequency %sMHz with modulation QAM_%s", freq, mod)
                 frequencies.append((freq, QAM_64))
             else:
-                logger.critical("invalid modulation QAM_%s detected, aborting", mod)
+                LOGGER.critical("invalid modulation QAM_%s detected, aborting", mod)
                 exit(1)
 
     # generate carbon destination
@@ -210,28 +210,28 @@ def build_configuration():
         carbon_host, carbon_port = args.carbon.split(":")
         try:
             carbon_port = int(carbon_port)
-        except:
-            logger.critical("unable to parse port %s as an integer, aborting", carbon_port)
+        except ValueError:
+            LOGGER.critical("unable to parse port %s as an integer, aborting", carbon_port)
             exit(1)
     elif args.carbon.find(":") < 0:
         carbon_host = args.carbon
     else:
-        logger.error("invalid carbon sink, aborting")
+        LOGGER.error("invalid carbon sink, aborting")
         exit(1)
 
 
     # show all log settings
-    logger.debug("adapter=%d", args.adapter)
-    logger.debug("carbon=%s", args.carbon)
-    logger.debug("debug=%s", args.debug)
-    logger.debug("frequencies=%s", frequencies)
-    logger.debug("prefix=%s", args.prefix)
-    logger.debug("step=%d", args.step)
-    logger.debug("tuner=%d", args.tuner)
+    LOGGER.debug("adapter=%d", args.adapter)
+    LOGGER.debug("carbon=%s", args.carbon)
+    LOGGER.debug("debug=%s", args.debug)
+    LOGGER.debug("frequencies=%s", frequencies)
+    LOGGER.debug("prefix=%s", args.prefix)
+    LOGGER.debug("step=%d", args.step)
+    LOGGER.debug("tuner=%d", args.tuner)
 
     # make sure we got at least one second per frequency
     if args.step / len(frequencies) < 1:
-        logger.error("A step of %d seconds with %d different frequencies will result in less " \
+        LOGGER.error("A step of %d seconds with %d different frequencies will result in less " \
                      "than one second of scan time per frequency, which is not supported. " \
                      "Aborting", args.step, len(frequencies))
         exit(1)
@@ -241,7 +241,7 @@ def build_configuration():
 
 
 def tune(fefd, frequency, modulation):
-    logger.debug("tuning to frequency %d with modulation %d", frequency, modulation)
+    LOGGER.debug("tuning to frequency %d with modulation %d", frequency, modulation)
     # we are about to issue 7 commands to the DVB frontend
     proptype = dtv_property * 7
     prop = proptype()
@@ -277,21 +277,21 @@ def tune(fefd, frequency, modulation):
         festatus = dvb_frontend_status()
         if fcntl.ioctl(fefd, FE_READ_STATUS, festatus) == 0:
             if (festatus.status & 0x10) == 0:
-                logger.error("frontend has no lock")
+                LOGGER.error("frontend has no lock")
                 return -1
         else:
-            logger.error("FE_READ_STATUS failed, unable to verify signal lock")
+            LOGGER.error("FE_READ_STATUS failed, unable to verify signal lock")
             return -1
     else:
-        logger.error("FE_SET_PROPERTY failed, unable to tune")
+        LOGGER.error("FE_SET_PROPERTY failed, unable to tune")
         return -1
-    logger.debug("tuning successful")
+    LOGGER.debug("tuning successful")
     return 0
 
 def start_demuxer(dmxfd):
     # DOCSIS uses the MPEG-TS Packet Identifier 8190
     # tell the demuxer to get us the transport stream
-    logger.debug("starting demuxer")
+    LOGGER.debug("starting demuxer")
     pesfilter = dmx_pes_filter_params()
     pesfilter.pid = 8190
     pesfilter.input = DMX_IN_FRONTEND
@@ -299,20 +299,20 @@ def start_demuxer(dmxfd):
     pesfilter.pes_type = DMX_PES_OTHER
     pesfilter.flags = DMX_IMMEDIATE_START
     if fcntl.ioctl(dmxfd, DMX_SET_PES_FILTER, pesfilter) != 0:
-        logger.error("unable to start demuxer")
+        LOGGER.error("unable to start demuxer")
         return -1
-    logger.debug("demuxer initialization successful")
+    LOGGER.debug("demuxer initialization successful")
     return 0
 
 def stop_demuxer(dmxfd):
-    logger.debug("stopping demuxer")
+    LOGGER.debug("stopping demuxer")
     if fcntl.ioctl(dmxfd, DMX_STOP) != 0:
-        logger.error("DMX_STOP failed, unable to stop demuxer (erm, what?)")
+        LOGGER.error("DMX_STOP failed, unable to stop demuxer (erm, what?)")
         return -1
     return 0
 
 def main():
-    # initialize console logger
+    # initialize console LOGGER
     init_logging()
 
     # simulate frequency and modulation list
@@ -320,19 +320,19 @@ def main():
 
     # update log level
     if not debug:
-        logger.setLevel(logging.INFO)
+        LOGGER.setLevel(logging.INFO)
     else:
-        logger.setLevel(logging.DEBUG)
+        LOGGER.setLevel(logging.DEBUG)
 
     # open the frontend device, demuxer and DVR device
-    logger.debug("about to open adapter %s, tuner %d devices", adapter, tuner)
+    LOGGER.debug("about to open adapter %s, tuner %d devices", adapter, tuner)
     adapter = "/dev/dvb/adapter" + str(adapter)
     try:
         fefd = open(adapter + "/frontend" + str(tuner), "r+")
         dmxfd = open(adapter +"/demux"     + str(tuner), "r+")
         dvrfd = open(adapter +"/dvr"       + str(tuner), "rb")
-    except:
-        logger.error("Unable to open devices, aborting.", exc_info=True)
+    except IOError:
+        LOGGER.error("Unable to open devices, aborting.", exc_info=True)
         exit(1)
 
     # the demux device needs to be opened non blocking
@@ -350,16 +350,16 @@ def main():
     # MPEG-TS are chopped into (at most) 188 sections
     ts_length = 188
     ts_buffer = ts_length * 2048
-    logger.debug("setting demuxer buffer size to %d", ts_buffer)
+    LOGGER.debug("setting demuxer buffer size to %d", ts_buffer)
     if fcntl.ioctl(dmxfd, DMX_SET_BUFFER_SIZE, ts_buffer) != 0:
-        logger.error("DMX_SET_BUFFER_SIZE failed, aborting")
+        LOGGER.error("DMX_SET_BUFFER_SIZE failed, aborting")
         fefd.close()
         dmxfd.close()
         dvrfd.close()
         exit(1)
 
     # begin main loop
-    logger.debug("starting main event loop")
+    LOGGER.debug("starting main event loop")
     while True:
         # prepare message array for sending to carbon
         carbon_messages = []
@@ -380,15 +380,15 @@ def main():
             start_time = timeit.default_timer()
             end_time = start_time
             # make sure we spend at most (step / number of frequencies) second per frequency
-            logger.debug("spending about %ds with data retrieval", (step / len(frequencies)))
+            LOGGER.debug("spending about %ds with data retrieval", (step / len(frequencies)))
             while (end_time - start_time) < (step / len(frequencies)):
                 # interrupting a poll() system call will cause a traceback
                 # using try/except will suppress that for SIGTERM, but not for SIGINT
                 # (Python got it"s own SIGINT handler)
                 try:
                     events = dvr_poller.poll(timeout * 1000)
-                except:
-                    logger.warn("event polling was interrupted", exc_info=True)
+                except IOError:
+                    LOGGER.warn("event polling was interrupted", exc_info=True)
                     # try to stop the demuxer
                     stop_demuxer(dmxfd)
                     break
@@ -415,12 +415,12 @@ def main():
             carbon_messages.append("{}.{}.{} {} {}".format(prefix, m_type, freq, \
                                    (count/elapsed), int(time.time())))
             # for debugging purposes, output data
-            logger.debug("frequency %d: spent %fs, got %d packets (%d bytes) equaling a rate of" \
+            LOGGER.debug("frequency %d: spent %fs, got %d packets (%d bytes) equaling a rate of" \
                          "%fkBit/s", freq, elapsed, len(data)/ts_length, len(data), \
                          ((count*8)/elapsed)/1024)
         # send data
         for msg in carbon_messages:
-            logger.debug("sending to carbon: %s", msg)
+            LOGGER.debug("sending to carbon: %s", msg)
             sock.sendto((msg + "\n").encode(), carbon)
 
     # close devices - will never be called :-)
@@ -430,5 +430,5 @@ def main():
     sock.close()
 
 if __name__ == "__main__":
-    logger = logging.getLogger()
+    LOGGER = logging.getLogger()
     main()

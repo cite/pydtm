@@ -4,7 +4,7 @@ After=syslog.target network.target
 
 [Service]
 User=pydtm
-EnvironmentFile=/etc/pydtm.env
+EnvironmentFile=-/etc/pydtm.env
 ExecStart=/usr/bin/pydtm
 Restart=on-failure
 

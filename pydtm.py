@@ -115,8 +115,9 @@ def init_logging():
     log_handler.setFormatter(formatter)
     LOGGER.addHandler(log_handler)
 
-def build_configuration():
-    # parse command line arguments
+def parse_arguments():
+    """This function parses the command line arguments and return them."""
+    # create comand line parser
     parser = argparse.ArgumentParser(
         description="pydtm - measure EuroDOCSIS 3.0 data rate",
         epilog="Note: By default, each frequency is scanned for step/num(frequencies) seconds. " \
@@ -124,6 +125,7 @@ def build_configuration():
                "PYDTM_CARBON, PYDTM_DEBUG, PYDTM_FREQUENCIES, PYDTM_PREFIX, PYDTM_STEP and" \
                "PYTDM_TUNER."
     )
+    # add arguments
     parser.add_argument("-a", "--adapter", type=int, default=0,
                         help="use /dev/dvb/adapterN devices (default: 0)")
     parser.add_argument("-c", "--carbon", type=str, default="localhost:2003",
@@ -139,8 +141,12 @@ def build_configuration():
                         help="metrics backend default resolution in seconds (default: 60)")
     parser.add_argument("-t", "--tuner", type=int, default=0,
                         help="use adapter's frontendN/dmxN/dvrN devices (default: 0)")
-    args = parser.parse_args()
 
+    # return parsed arguments
+    return parser.parse_args()
+
+def eval_envvars(args):
+    """Parse environment variables if present."""
     # overwrite with environment values
     if "PYDTM_ADAPTER" in os.environ:
         LOGGER.debug("reading adapter from environment")
@@ -176,69 +182,67 @@ def build_configuration():
             LOGGER.error("error parsing PYDTM_TUNER value %s as integer, using %d instead",
                          os.environ["PYDTM_TUNER"], args.tuner)
 
+def build_configuration():
+    """Build basic configuration."""
+    # parse command line arguments first, then evaluate environment
+    args = parse_arguments()
+    eval_envvars(args)
+
     # generate a list of frequencies
     frequencies = []
     for freq in args.frequencies.split(","):
-        if freq.find(":") < 0:
-            try:
-                frequencies.append((int(freq), QAM_256))
-            except ValueError:
-                LOGGER.critical("error parsing frequency %s as integer, aborting", freq)
-                exit(1)
-            LOGGER.debug("added frequency %sMHz", freq)
-        else:
+        mod = "256"
+        if freq.find(":") > 0:
             freq, mod = freq.split(":")
-            try:
-                freq = int(freq)
-            except ValueError:
-                LOGGER.critical("error parsing frequency %s as string, aborting", freq)
-                exit(1)
-            if mod == "256":
-                LOGGER.debug("adding frequency %sMHz with modulation QAM_%s", freq, mod)
-                frequencies.append((freq, QAM_256))
-            elif mod == "64":
-                LOGGER.debug("adding frequency %sMHz with modulation QAM_%s", freq, mod)
-                frequencies.append((freq, QAM_64))
-            else:
-                LOGGER.critical("invalid modulation QAM_%s detected, aborting", mod)
-                exit(1)
+
+        # try to parse frequency
+        try:
+            freq = int(freq)
+        except ValueError:
+            LOGGER.critical("error parsing frequency %s as integer, aborting", freq)
+            exit(1)
+
+        # try to parse modulation
+        if mod == "256":
+            LOGGER.debug("adding frequency %sMHz with modulation QAM_%s", freq, mod)
+            frequencies.append((freq, QAM_256))
+        elif mod == "64":
+            LOGGER.debug("adding frequency %sMHz with modulation QAM_%s", freq, mod)
+            frequencies.append((freq, QAM_64))
+        else:
+            LOGGER.critical("invalid modulation QAM_%s detected, aborting", mod)
+            exit(1)
+    args.frequencies = frequencies
 
     # generate carbon destination
-    carbon_port = 2003
-    carbon_host = "localhost"
+    args.carbon_port = 2003
+    args.carbon_host = "localhost"
     if args.carbon.find(":") > 0:
-        carbon_host, carbon_port = args.carbon.split(":")
+        args.carbon_host, args.carbon_port = args.carbon.split(":")
         try:
-            carbon_port = int(carbon_port)
+            args.carbon_port = int(args.carbon_port)
         except ValueError:
-            LOGGER.critical("unable to parse port %s as an integer, aborting", carbon_port)
+            LOGGER.critical("unable to parse port %s as an integer, aborting", args.carbon_port)
             exit(1)
     elif args.carbon.find(":") < 0:
-        carbon_host = args.carbon
+        args.carbon_host = args.carbon
     else:
+        # colon on first string position, wtf?
         LOGGER.error("invalid carbon sink, aborting")
         exit(1)
+    del args.carbon
 
-
-    # show all log settings
-    LOGGER.debug("adapter=%d", args.adapter)
-    LOGGER.debug("carbon=%s", args.carbon)
-    LOGGER.debug("debug=%s", args.debug)
-    LOGGER.debug("frequencies=%s", frequencies)
-    LOGGER.debug("prefix=%s", args.prefix)
-    LOGGER.debug("step=%d", args.step)
-    LOGGER.debug("tuner=%d", args.tuner)
+    # show all settings
+    for key, value in vars(args).items():
+        LOGGER.debug("%s=%s", key, value)
 
     # make sure we got at least one second per frequency
     if args.step / len(frequencies) < 1:
-        LOGGER.error("A step of %d seconds with %d different frequencies will result in less " \
+        LOGGER.warning("A step of %d seconds with %d different frequencies will result in less " \
                      "than one second of scan time per frequency, which is not supported. " \
                      "Aborting", args.step, len(frequencies))
-        exit(1)
 
-    return args.adapter, (carbon_host, carbon_port), args.debug, frequencies, args.prefix, \
-           args.step, args.tuner
-
+    return args
 
 def tune(fefd, frequency, modulation):
     LOGGER.debug("tuning to frequency %d with modulation %d", frequency, modulation)
@@ -316,21 +320,21 @@ def main():
     init_logging()
 
     # simulate frequency and modulation list
-    adapter, carbon, debug, frequencies, prefix, step, tuner = build_configuration()
+    config = build_configuration()
 
     # update log level
-    if not debug:
+    if not config.debug:
         LOGGER.setLevel(logging.INFO)
     else:
         LOGGER.setLevel(logging.DEBUG)
 
     # open the frontend device, demuxer and DVR device
-    LOGGER.debug("about to open adapter %s, tuner %d devices", adapter, tuner)
-    adapter = "/dev/dvb/adapter" + str(adapter)
+    config.adapter = "/dev/dvb/adapter" + str(config.adapter)
+    LOGGER.debug("about to open adapter %s, tuner %d devices", config.adapter, config.tuner)
     try:
-        fefd = open(adapter + "/frontend" + str(tuner), "r+")
-        dmxfd = open(adapter +"/demux"     + str(tuner), "r+")
-        dvrfd = open(adapter +"/dvr"       + str(tuner), "rb")
+        fefd = open(config.adapter  + "/frontend" + str(config.tuner), "r+")
+        dmxfd = open(config.adapter +"/demux"     + str(config.tuner), "r+")
+        dvrfd = open(config.adapter +"/dvr"       + str(config.tuner), "rb")
     except IOError:
         LOGGER.error("Unable to open devices, aborting.", exc_info=True)
         exit(1)
@@ -364,7 +368,7 @@ def main():
         # prepare message array for sending to carbon
         carbon_messages = []
         # iterate over all given frequency and modulation paris
-        for freq, mod in frequencies:
+        for freq, mod in config.frequencies:
             # try tuning
             if tune(fefd, (freq * 1000000), mod) != 0:
                 break
@@ -380,15 +384,16 @@ def main():
             start_time = timeit.default_timer()
             end_time = start_time
             # make sure we spend at most (step / number of frequencies) second per frequency
-            LOGGER.debug("spending about %ds with data retrieval", (step / len(frequencies)))
-            while (end_time - start_time) < (step / len(frequencies)):
+            LOGGER.debug("spending about %ds with data retrieval",
+                         (config.step / len(config.frequencies)))
+            while (end_time - start_time) < (config.step / len(config.frequencies)):
                 # interrupting a poll() system call will cause a traceback
                 # using try/except will suppress that for SIGTERM, but not for SIGINT
                 # (Python got it"s own SIGINT handler)
                 try:
                     events = dvr_poller.poll(timeout * 1000)
                 except IOError:
-                    LOGGER.warn("event polling was interrupted", exc_info=True)
+                    LOGGER.warning("event polling was interrupted", exc_info=True)
                     # try to stop the demuxer
                     stop_demuxer(dmxfd)
                     break
@@ -412,16 +417,16 @@ def main():
                 m_type = "qam256"
             else:
                 m_type = "qam64"
-            carbon_messages.append("{}.{}.{} {} {}".format(prefix, m_type, freq, \
+            carbon_messages.append("{}.{}.{} {} {}".format(config.prefix, m_type, freq, \
                                    (count/elapsed), int(time.time())))
             # for debugging purposes, output data
-            LOGGER.debug("frequency %d: spent %fs, got %d packets (%d bytes) equaling a rate of" \
+            LOGGER.debug("frequency %d: spent %fs, got %d packets (%d bytes) equaling a rate of " \
                          "%fkBit/s", freq, elapsed, len(data)/ts_length, len(data), \
                          ((count*8)/elapsed)/1024)
         # send data
         for msg in carbon_messages:
             LOGGER.debug("sending to carbon: %s", msg)
-            sock.sendto((msg + "\n").encode(), carbon)
+            sock.sendto((msg + "\n").encode(), (config.carbon_host, config.carbon_port))
 
     # close devices - will never be called :-)
     dvrfd.close()

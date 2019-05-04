@@ -337,108 +337,95 @@ def main():
     # open the frontend device, demuxer and DVR device
     config.adapter = "/dev/dvb/adapter" + str(config.adapter)
     LOGGER.debug("about to open adapter %s, tuner %d devices", config.adapter, config.tuner)
-    try:
-        fefd = open(config.adapter  + "/frontend" + str(config.tuner), "r+")
-        dmxfd = open(config.adapter +"/demux"     + str(config.tuner), "r+")
-        dvrfd = open(config.adapter +"/dvr"       + str(config.tuner), "rb")
-    except IOError:
-        LOGGER.error("Unable to open devices, aborting.", exc_info=True)
-        exit(1)
+    with open(config.adapter + "/frontend" + str(config.tuner), "r+") as fefd, \
+         open(config.adapter + "/demux"    + str(config.tuner), "r+") as dmxfd, \
+         open(config.adapter + "/dvr"      + str(config.tuner), "rb") as dvrfd:
 
-    # the demux device needs to be opened non blocking
-    flag = fcntl.fcntl(dvrfd, fcntl.F_GETFL)
-    fcntl.fcntl(dvrfd, fcntl.F_SETFL, flag | os.O_NONBLOCK)
+        # the demux device needs to be opened non blocking
+        flag = fcntl.fcntl(dvrfd, fcntl.F_GETFL)
+        fcntl.fcntl(dvrfd, fcntl.F_SETFL, flag | os.O_NONBLOCK)
 
-    # we will need to poll the DVR
-    dvr_poller = select.poll()
-    dvr_poller.register(dvrfd, select.POLLIN | select.POLLPRI)
+        # we will need to poll the DVR
+        dvr_poller = select.poll()
+        dvr_poller.register(dvrfd, select.POLLIN | select.POLLPRI)
 
-    # create sending socket
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # create sending socket
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
-    # set appropriate buffer size
-    # MPEG-TS are chopped into (at most) 188 sections
-    ts_length = 188
-    ts_buffer = ts_length * 2048
-    LOGGER.debug("setting demuxer buffer size to %d", ts_buffer)
-    if fcntl.ioctl(dmxfd, DMX_SET_BUFFER_SIZE, ts_buffer) != 0:
-        LOGGER.error("DMX_SET_BUFFER_SIZE failed, aborting")
-        fefd.close()
-        dmxfd.close()
-        dvrfd.close()
-        exit(1)
+        # set appropriate buffer size
+        # MPEG-TS are chopped into (at most) 188 sections
+        ts_length = 188
+        ts_buffer = ts_length * 2048
+        LOGGER.debug("setting demuxer buffer size to %d", ts_buffer)
+        if fcntl.ioctl(dmxfd, DMX_SET_BUFFER_SIZE, ts_buffer) != 0:
+            LOGGER.error("DMX_SET_BUFFER_SIZE failed, aborting")
+            exit(1)
 
-    # begin main loop
-    LOGGER.debug("starting main event loop")
-    while True:
-        # prepare message array for sending to carbon
-        carbon_messages = []
-        # iterate over all given frequency and modulation paris
-        for tunable in config.frequencies:
-            # try tuning
-            if tune(fefd, tunable) != 0:
-                break
-
-            # at this point, we can poll data from /dev/dvb/adapter0/dvr0,
-            # which we will promptly do, defining a 2s timeout
-            timeout = 2
-            count = 0
-
-            if start_demuxer(dmxfd) != 0:
-                break
-
-            start_time = timeit.default_timer()
-            end_time = start_time
-            # make sure we spend at most (step / number of frequencies) second per frequency
-            LOGGER.debug("spending about %ds with data retrieval",
-                         (config.step / len(config.frequencies)))
-            while (end_time - start_time) < (config.step / len(config.frequencies)):
-                # interrupting a poll() system call will cause a traceback
-                # using try/except will suppress that for SIGTERM, but not for SIGINT
-                # (Python got it"s own SIGINT handler)
-                try:
-                    events = dvr_poller.poll(timeout * 1000)
-                except IOError:
-                    LOGGER.warning("event polling was interrupted", exc_info=True)
-                    # try to stop the demuxer
-                    stop_demuxer(dmxfd)
+        # begin main loop
+        LOGGER.debug("starting main event loop")
+        while True:
+            # prepare message array for sending to carbon
+            carbon_messages = []
+            # iterate over all given frequency and modulation paris
+            for tunable in config.frequencies:
+                # try tuning
+                if tune(fefd, tunable) != 0:
                     break
 
-                for _, flag in events:
-                    if flag & (select.POLLIN | select.POLLPRI):
-                        data = dvrfd.read(ts_buffer)
-                        count += len(data)
-                        end_time = timeit.default_timer()
-                        elapsed = (end_time - start_time)
-            # record final end time
-            end_time = timeit.default_timer()
-            elapsed = (end_time - start_time)
+                # at this point, we can poll data from /dev/dvb/adapter0/dvr0,
+                # which we will promptly do, defining a 2s timeout
+                timeout = 2
+                count = 0
 
-            # stop filtering
-            if stop_demuxer(dmxfd) != 0:
-                break
+                # start filtering
+                if start_demuxer(dmxfd) != 0:
+                    break
 
-            # append data to carbon message
-            if tunable.modulation == QAM_256:
-                m_type = "qam256"
-            else:
-                m_type = "qam64"
-            carbon_messages.append("{}.{}.{} {} {}".format(config.prefix, m_type, \
-                                   tunable.frequency, (count/elapsed), int(time.time())))
-            # for debugging purposes, output data
-            LOGGER.debug("frequency %d: spent %fs, got %d packets (%d bytes) equaling a rate of " \
-                         "%fkBit/s", tunable.frequency, elapsed, len(data)/ts_length, len(data), \
-                         ((count*8)/elapsed)/1024)
-        # send data
-        for msg in carbon_messages:
-            LOGGER.debug("sending to carbon: %s", msg)
-            sock.sendto((msg + "\n").encode(), (config.carbon_host, config.carbon_port))
+                start_time = timeit.default_timer()
+                end_time = start_time
+                # make sure we spend at most (step / number of frequencies) second per frequency
+                LOGGER.debug("spending about %ds with data retrieval",
+                             config.step / len(config.frequencies))
+                while (end_time - start_time) < (config.step / len(config.frequencies)):
+                    # interrupting a poll() system call will cause a traceback
+                    # using try/except will suppress that for SIGTERM, but not for SIGINT
+                    # (Python got it"s own SIGINT handler)
+                    try:
+                        events = dvr_poller.poll(timeout * 1000)
+                    except IOError:
+                        LOGGER.warning("event polling was interrupted", exc_info=True)
+                        # try to stop the demuxer
+                        stop_demuxer(dmxfd)
+                        break
 
-    # close devices - will never be called :-)
-    dvrfd.close()
-    dmxfd.close()
-    fefd.close()
-    sock.close()
+                    for _, flag in events:
+                        if flag & (select.POLLIN | select.POLLPRI):
+                            data = dvrfd.read(ts_buffer)
+                            count += len(data)
+                            end_time = timeit.default_timer()
+                            elapsed = (end_time - start_time)
+                # record final end time
+                elapsed = (timeit.default_timer() - start_time)
+
+                # stop filtering
+                if stop_demuxer(dmxfd) != 0:
+                    break
+
+                # append data to carbon message
+                if tunable.modulation == QAM_256:
+                    m_type = "qam256"
+                else:
+                    m_type = "qam64"
+                carbon_messages.append("{}.{}.{} {} {}".format(config.prefix, m_type, \
+                                    tunable.frequency, (count/elapsed), int(time.time())))
+                # for debugging purposes, output data
+                LOGGER.debug("frequency %d: spent %fs, got %d packets (%d bytes) equaling a rate" \
+                             "of %fkBit/s", tunable.frequency, elapsed, len(data)/ts_length, \
+                             len(data), (count*8)/elapsed/1024)
+            # send data
+            for msg in carbon_messages:
+                LOGGER.debug("sending to carbon: %s", msg)
+                sock.sendto((msg + "\n").encode(), (config.carbon_host, config.carbon_port))
 
 if __name__ == "__main__":
     LOGGER = logging.getLogger()

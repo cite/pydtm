@@ -17,14 +17,15 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import argparse
+import collections
 import ctypes
 import fcntl
 import logging
 import os
 import select
+import socket
 import time
 import timeit
-import socket
 
 # DVB constants from Linux kernel files
 DMX_IMMEDIATE_START = 0x4
@@ -106,6 +107,9 @@ class dmx_pes_filter_params(ctypes.Structure):
     ]
 # end code copied from https://pypi.org/project/linuxdvb/
 
+# since (Euro)DOCSIS 3.0 defines a lot of parameters already, when tuning, we are only interested
+# in setting a frequency and a modulation
+Tunable = collections.namedtuple('Tunable', ['frequency', 'modulation'])
 
 def init_logging():
     LOGGER.setLevel(logging.DEBUG)
@@ -202,13 +206,14 @@ def build_configuration():
             LOGGER.critical("error parsing frequency %s as integer, aborting", freq)
             exit(1)
 
-        # try to parse modulation
+        # generate list of tunable frequency/modulation combinations, translate human readable
+        # modulation to DVB API
         if mod == "256":
             LOGGER.debug("adding frequency %sMHz with modulation QAM_%s", freq, mod)
-            frequencies.append((freq, QAM_256))
+            frequencies.append(Tunable(freq, QAM_256))
         elif mod == "64":
             LOGGER.debug("adding frequency %sMHz with modulation QAM_%s", freq, mod)
-            frequencies.append((freq, QAM_64))
+            frequencies.append(Tunable(freq, QAM_64))
         else:
             LOGGER.critical("invalid modulation QAM_%s detected, aborting", mod)
             exit(1)
@@ -239,13 +244,14 @@ def build_configuration():
     # make sure we got at least one second per frequency
     if args.step / len(frequencies) < 1:
         LOGGER.warning("A step of %d seconds with %d different frequencies will result in less " \
-                     "than one second of scan time per frequency, which is not supported. " \
-                     "Aborting", args.step, len(frequencies))
+                       "than one second of scan time per frequency, which is not supported.", \
+                       args.step, len(frequencies))
 
     return args
 
-def tune(fefd, frequency, modulation):
-    LOGGER.debug("tuning to frequency %d with modulation %d", frequency, modulation)
+def tune(fefd, tunable):
+    LOGGER.debug("tuning to frequency %dMHz with modulation %d", tunable.frequency, \
+                 tunable.modulation)
     # we are about to issue 7 commands to the DVB frontend
     proptype = dtv_property * 7
     prop = proptype()
@@ -255,7 +261,7 @@ def tune(fefd, frequency, modulation):
     # set modulation
     # TODO: support QAM_AUTO?
     prop[1].cmd = DTV_MODULATION
-    prop[1].u.data = modulation
+    prop[1].u.data = tunable.modulation
     # set EuroDOCSIS symbol rate
     prop[2].cmd = DTV_SYMBOL_RATE
     prop[2].u.data = 6952000
@@ -267,7 +273,7 @@ def tune(fefd, frequency, modulation):
     prop[4].u.data = FEC_AUTO
     # set frequency
     prop[5].cmd = DTV_FREQUENCY
-    prop[5].u.data = frequency
+    prop[5].u.data = tunable.frequency * 1000000
     # tell the kernel to actually tune into the given frequency
     prop[6].cmd = DTV_TUNE
     dtv_props = dtv_properties()
@@ -368,9 +374,9 @@ def main():
         # prepare message array for sending to carbon
         carbon_messages = []
         # iterate over all given frequency and modulation paris
-        for freq, mod in config.frequencies:
+        for tunable in config.frequencies:
             # try tuning
-            if tune(fefd, (freq * 1000000), mod) != 0:
+            if tune(fefd, tunable) != 0:
                 break
 
             # at this point, we can poll data from /dev/dvb/adapter0/dvr0,
@@ -413,15 +419,15 @@ def main():
                 break
 
             # append data to carbon message
-            if mod == QAM_256:
+            if tunable.modulation == QAM_256:
                 m_type = "qam256"
             else:
                 m_type = "qam64"
-            carbon_messages.append("{}.{}.{} {} {}".format(config.prefix, m_type, freq, \
-                                   (count/elapsed), int(time.time())))
+            carbon_messages.append("{}.{}.{} {} {}".format(config.prefix, m_type, \
+                                   tunable.frequency, (count/elapsed), int(time.time())))
             # for debugging purposes, output data
             LOGGER.debug("frequency %d: spent %fs, got %d packets (%d bytes) equaling a rate of " \
-                         "%fkBit/s", freq, elapsed, len(data)/ts_length, len(data), \
+                         "%fkBit/s", tunable.frequency, elapsed, len(data)/ts_length, len(data), \
                          ((count*8)/elapsed)/1024)
         # send data
         for msg in carbon_messages:

@@ -27,14 +27,18 @@ import socket
 import time
 import timeit
 
+# init logging
+logging.basicConfig(level=logging.INFO)
+LOGGER = logging.getLogger(__name__)
+
 # DVB constants from Linux kernel files
 DMX_IMMEDIATE_START = 0x4
 DMX_IN_FRONTEND = 0x0
 DMX_OUT_TS_TAP = 0x2
 DMX_PES_OTHER = 0x14
-DMX_SET_BUFFER_SIZE = 0x6f2d # ioctl
-DMX_SET_PES_FILTER = 0x40146f2c # ioctl
-DMX_STOP = 0x6f2a
+DMX_SET_BUFFER_SIZE = 0x6F2D  # ioctl
+DMX_SET_PES_FILTER = 0x40146F2C  # ioctl
+DMX_STOP = 0x6F2A
 DTV_DELIVERY_SYSTEM = 0x11
 DTV_FREQUENCY = 0x3
 DTV_INNER_FEC = 0x9
@@ -43,12 +47,13 @@ DTV_MODULATION = 0x4
 DTV_SYMBOL_RATE = 0x8
 DTV_TUNE = 0x1
 FEC_AUTO = 0x9
-FE_READ_STATUS = -0x7ffb90bb # ioctl
-FE_SET_PROPERTY = 0x40086f52 # ioctl
+FE_READ_STATUS = -0x7FFB90BB  # ioctl
+FE_SET_PROPERTY = 0x40086F52  # ioctl
 INVERSION_OFF = 0x0
 QAM_256 = 0x5
 QAM_64 = 0x3
 SYS_DVBC_ANNEX_AC = 0x1
+
 
 # mappings for DVB API data types - this code was copied
 # more or less verbatim from: https://pypi.org/project/linuxdvb/
@@ -59,142 +64,172 @@ class dtv_property(ctypes.Structure):
                 ("data", ctypes.c_uint8 * 32),
                 ("len", ctypes.c_uint32),
                 ("reserved1", ctypes.c_uint32 * 3),
-                ("reserved2", ctypes.c_void_p)
+                ("reserved2", ctypes.c_void_p),
             ]
-        _fields_ = [
-            ("data", ctypes.c_uint32),
-            ("buffer", _s)
-        ]
+
+        _fields_ = [("data", ctypes.c_uint32), ("buffer", _s)]
+
     _fields_ = [
         ("cmd", ctypes.c_uint32),
         ("reserved", ctypes.c_uint32 * 3),
         ("u", _u),
-        ("result", ctypes.c_int)
+        ("result", ctypes.c_int),
     ]
     _pack_ = True
+
+
 class dtv_properties(ctypes.Structure):
-    _fields_ = [
-        ("num", ctypes.c_uint32),
-        ("props", ctypes.POINTER(dtv_property))
-    ]
+    _fields_ = [("num", ctypes.c_uint32), ("props", ctypes.POINTER(dtv_property))]
+
+
 class dvb_qam_parameters(ctypes.Structure):
     _fields_ = [
         ("symbol_rate", ctypes.c_uint32),
         ("fec_inner", ctypes.c_uint),
-        ("modulation", ctypes.c_uint)
+        ("modulation", ctypes.c_uint),
     ]
+
+
 class dvb_frontend_parameters(ctypes.Structure):
     class _u(ctypes.Union):
-        _fields_ = [
-            ("qam", dvb_qam_parameters),
-        ]
-    _fields_ = [
-        ("frequency", ctypes.c_uint32),
-        ("inversion", ctypes.c_uint),
-        ("u", _u)
-    ]
+        _fields_ = [("qam", dvb_qam_parameters)]
+
+    _fields_ = [("frequency", ctypes.c_uint32), ("inversion", ctypes.c_uint), ("u", _u)]
+
+
 class dvb_frontend_status(ctypes.Structure):
-    _fields_ = [
-        ("status", ctypes.c_uint),
-    ]
+    _fields_ = [("status", ctypes.c_uint)]
+
+
 class dmx_pes_filter_params(ctypes.Structure):
     _fields_ = [
         ("pid", ctypes.c_uint16),
         ("input", ctypes.c_uint),
         ("output", ctypes.c_uint),
         ("pes_type", ctypes.c_uint),
-        ("flags", ctypes.c_uint32)
+        ("flags", ctypes.c_uint32),
     ]
+
+
 # end code copied from https://pypi.org/project/linuxdvb/
 
 # since (Euro)DOCSIS 3.0 defines a lot of parameters already, when tuning, we are only interested
 # in setting a frequency and a modulation
-Tunable = collections.namedtuple('Tunable', ['frequency', 'modulation'])
+Tunable = collections.namedtuple("Tunable", ["frequency", "modulation"])
 
-def init_logging():
-    LOGGER.setLevel(logging.DEBUG)
-    log_handler = logging.StreamHandler()
-    log_handler.setLevel(logging.DEBUG)
-    formatter = logging.Formatter("%(levelname)s: %(message)s")
-    log_handler.setFormatter(formatter)
-    LOGGER.addHandler(log_handler)
 
 def parse_arguments():
     """This function parses the command line arguments and return them."""
     # create comand line parser
     parser = argparse.ArgumentParser(
         description="pydtm - measure EuroDOCSIS 3.0 data rate",
-        epilog="Note: By default, each frequency is scanned for step/num(frequencies) seconds. " \
-               "All parameters can also be passed as environment variables, e.g. PYDTM_ADAPTER, " \
-               "PYDTM_CARBON, PYDTM_DEBUG, PYDTM_FREQUENCIES, PYDTM_PREFIX, PYDTM_STEP and" \
-               "PYTDM_TUNER."
+        epilog="Note: By default, each frequency is scanned for step/num(frequencies) seconds. "
+        "All parameters can also be passed as environment variables, e.g. PYDTM_ADAPTER, "
+        "PYDTM_CARBON, PYDTM_DEBUG, PYDTM_FREQUENCIES, PYDTM_PREFIX, PYDTM_STEP and"
+        "PYTDM_TUNER.",
     )
     # add arguments
-    parser.add_argument("-a", "--adapter", type=int, default=0,
-                        help="use /dev/dvb/adapterN devices (default: 0)")
-    parser.add_argument("-c", "--carbon", type=str, default="localhost:2003",
-                        help="address:port of carbon sink (default: localhost:2003)")
-    parser.add_argument("-d", "--debug", action="store_true",
-                        help="enable debug logging (default: not enabled)")
-    parser.add_argument("-f", "--frequencies", type=str, default="546",
-                        help=("a list of 'frequency' or 'frequency:modulation'"
-                              "pairs (default: 546:256)"))
-    parser.add_argument("-p", "--prefix", type=str, default="docsis",
-                        help="carbon prefix/tree location (default: docsis)")
-    parser.add_argument("-s", "--step", type=int, default="60",
-                        help="metrics backend default resolution in seconds (default: 60)")
-    parser.add_argument("-t", "--tuner", type=int, default=0,
-                        help="use adapter's frontendN/dmxN/dvrN devices (default: 0)")
+    parser.add_argument(
+        "-a",
+        "--adapter",
+        type=int,
+        default=0,
+        help="use /dev/dvb/adapterN devices (default: 0)",
+    )
+    parser.add_argument(
+        "-c",
+        "--carbon",
+        type=str,
+        default="localhost:2003",
+        help="address:port of carbon sink (default: localhost:2003)",
+    )
+    parser.add_argument(
+        "-d",
+        "--debug",
+        action="store_true",
+        help="enable debug logging (default: not enabled)",
+    )
+    parser.add_argument(
+        "-f",
+        "--frequencies",
+        type=str,
+        default="546",  # this is a completely arbitrary value
+        help=(
+            "a list of 'frequency' or 'frequency:modulation'" "pairs (default: 546:256)"
+        ),
+    )
+    parser.add_argument(
+        "-p",
+        "--prefix",
+        type=str,
+        default="docsis",
+        help="carbon prefix/tree location (default: docsis)",
+    )
+    parser.add_argument(
+        "-s",
+        "--step",
+        type=int,
+        default="60",
+        help="metrics backend default resolution in seconds (default: 60)",
+    )
+    parser.add_argument(
+        "-t",
+        "--tuner",
+        type=int,
+        default=0,
+        help="use adapter's frontendN/dmxN/dvrN devices (default: 0)",
+    )
 
     # return parsed arguments
     return parser.parse_args()
 
+
+def set_from_env(envvar, default):
+    """If envar is set, return it, else default"""
+    if envvar in os.environ:
+        return os.environ[envvar]
+    return default
+
+
 def eval_envvars(args):
     """Parse environment variables if present."""
     # overwrite with environment values
-    if "PYDTM_ADAPTER" in os.environ:
-        LOGGER.debug("reading adapter from environment")
-        try:
-            args.adapter = int(os.environ["PYDTM_ADAPTER"])
-        except ValueError:
-            LOGGER.error("error parsing PYDTM_ADAPTER value %s as integer, using %d instead",
-                         os.environ["PYDTM_ADAPTER"], args.adapter)
-    if "PYDTM_CARBON" in os.environ:
-        LOGGER.debug("reading carbon sink from environment")
-        args.carbon = os.environ["PYDTM_CARBON"]
+    try:
+        args.adapter = int(set_from_env("PYDTM_ADAPTER", args.adapter))
+    except ValueError:
+        LOGGER.error(
+            "error parsing PYDTM_ADAPTER value %s as integer, using %d instead",
+            os.environ["PYDTM_ADAPTER"],
+            args.adapter,
+        )
+    args.carbon = set_from_env("PYDTM_CARBON", args.carbon)
     if "PYDTM_DEBUG" in os.environ:
-        LOGGER.debug("reading debug flag from environment")
         args.debug = True
-    if "PYDTM_FREQUENCIES" in os.environ:
-        LOGGER.debug("reading frequency list from environment")
-        args.frequencies = os.environ["PYDTM_FREQUENCIES"]
-    if "PYDTM_PREFIX" in os.environ:
-        LOGGER.debug("reading carbon prefix/tree location from environment")
-        args.frequencies = os.environ["PYDTM_PREFIX"]
-    if "PYDTM_STEP" in os.environ:
-        LOGGER.debug("reading metrics store resolution from environment")
-        try:
-            args.step = int(os.environ["PYDTM_STEP"])
-        except ValueError:
-            LOGGER.error("error parsing PYDTM_STEP value %s as integer, using %d instead",
-                         os.environ["PYDTM_STEP"], args.step)
-    if "PYDTM_TUNER" in os.environ:
-        LOGGER.debug("reading tuner from environment")
-        try:
-            args.adapter = int(os.environ["PYDTM_TUNER"])
-        except ValueError:
-            LOGGER.error("error parsing PYDTM_TUNER value %s as integer, using %d instead",
-                         os.environ["PYDTM_TUNER"], args.tuner)
+    args.frequencies = set_from_env("PYDTM_FREQUENCIES", args.frequencies)
+    args.prefix = set_from_env("PYDTM_PREFIX", args.prefix)
+    try:
+        args.step = int(set_from_env("PYDTM_STEP", args.step))
+    except ValueError:
+        LOGGER.error(
+            "error parsing PYDTM_STEP value %s as integer, using %d instead",
+            os.environ["PYDTM_STEP"],
+            args.step,
+        )
+    try:
+        args.tuner = int(set_from_env("PYDTM_TUNER", args.tuner))
+    except ValueError:
+        LOGGER.error(
+            "error parsing PYDTM_TUNER value %s as integer, using %d instead",
+            os.environ["PYDTM_TUNER"],
+            args.tuner,
+        )
 
-def build_configuration():
-    """Build basic configuration."""
-    # parse command line arguments first, then evaluate environment
-    args = parse_arguments()
-    eval_envvars(args)
 
+def frequency_list(frequencies):
+    """parse frequency list from arguments"""
     # generate a list of frequencies
-    frequencies = []
-    for freq in args.frequencies.split(","):
+    f_list = []
+    for freq in frequencies.split(","):
         mod = "256"
         if freq.find(":") > 0:
             freq, mod = freq.split(":")
@@ -209,49 +244,72 @@ def build_configuration():
         # generate list of tunable frequency/modulation combinations, translate human readable
         # modulation to DVB API
         if mod == "256":
-            LOGGER.debug("adding frequency %sMHz with modulation QAM_%s", freq, mod)
-            frequencies.append(Tunable(freq, QAM_256))
+            f_list.append(Tunable(freq, QAM_256))
         elif mod == "64":
-            LOGGER.debug("adding frequency %sMHz with modulation QAM_%s", freq, mod)
-            frequencies.append(Tunable(freq, QAM_64))
+            f_list.append(Tunable(freq, QAM_64))
         else:
             LOGGER.critical("invalid modulation QAM_%s detected, aborting", mod)
             exit(1)
-    args.frequencies = frequencies
+    return f_list
 
+
+def parse_carbon(carbon):
+    """parse carbon host and port"""
     # generate carbon destination
-    args.carbon_port = 2003
-    args.carbon_host = "localhost"
-    if args.carbon.find(":") > 0:
-        args.carbon_host, args.carbon_port = args.carbon.split(":")
+    carbon_host = "localhost"
+    carbon_port = 2003
+    if carbon.find(":") > 0:
+        carbon_host, carbon_port = carbon.split(":")
         try:
-            args.carbon_port = int(args.carbon_port)
+            carbon_port = int(carbon_port)
         except ValueError:
-            LOGGER.critical("unable to parse port %s as an integer, aborting", args.carbon_port)
+            LOGGER.critical(
+                "unable to parse port %s as an integer, aborting", carbon_port
+            )
             exit(1)
-    elif args.carbon.find(":") < 0:
-        args.carbon_host = args.carbon
+    elif carbon.find(":") < 0:
+        carbon_host = carbon
     else:
         # colon on first string position, wtf?
         LOGGER.error("invalid carbon sink, aborting")
         exit(1)
+    return carbon_host, carbon_port
+
+
+def build_configuration():
+    """Build basic configuration."""
+    # parse command line arguments first, then evaluate environment
+    args = parse_arguments()
+    eval_envvars(args)
+
+    # parse frequency list and carbon sink from argument strings
+    frequencies = frequency_list(args.frequencies)
+    args.carbon_host, args.carbon_port = parse_carbon(args.carbon)
     del args.carbon
 
     # show all settings
     for key, value in vars(args).items():
-        LOGGER.debug("%s=%s", key, value)
+        LOGGER.info("%s=%s", key, value)
 
     # make sure we got at least one second per frequency
     if args.step / len(frequencies) < 1:
-        LOGGER.warning("A step of %d seconds with %d different frequencies will result in less " \
-                       "than one second of scan time per frequency, which is not supported.", \
-                       args.step, len(frequencies))
+        LOGGER.warning(
+            "A step of %d seconds with %d different frequencies will result in less "
+            "than one second of scan time per frequency, which is not supported.",
+            args.step,
+            len(frequencies),
+        )
 
     return args
 
+
 def tune(fefd, tunable):
-    LOGGER.debug("tuning to frequency %dMHz with modulation %d", tunable.frequency, \
-                 tunable.modulation)
+    """tune to given frequency"""
+    LOGGER.debug(
+        "tuning to frequency %dMHz with modulation %d",
+        tunable.frequency,
+        tunable.modulation,
+    )
     # we are about to issue 7 commands to the DVB frontend
     proptype = dtv_property * 7
     prop = proptype()
@@ -298,7 +356,9 @@ def tune(fefd, tunable):
     LOGGER.debug("tuning successful")
     return 0
 
+
 def start_demuxer(dmxfd):
+    """start demuxer"""
     # DOCSIS uses the MPEG-TS Packet Identifier 8190
     # tell the demuxer to get us the transport stream
     LOGGER.debug("starting demuxer")
@@ -314,17 +374,18 @@ def start_demuxer(dmxfd):
     LOGGER.debug("demuxer initialization successful")
     return 0
 
+
 def stop_demuxer(dmxfd):
+    """stop demuxer"""
     LOGGER.debug("stopping demuxer")
     if fcntl.ioctl(dmxfd, DMX_STOP) != 0:
         LOGGER.error("DMX_STOP failed, unable to stop demuxer (erm, what?)")
         return -1
     return 0
 
-def main():
-    # initialize console LOGGER
-    init_logging()
 
+def main():
+    """run main program"""
     # simulate frequency and modulation list
     config = build_configuration()
 
@@ -336,10 +397,9 @@ def main():
 
     # open the frontend device, demuxer and DVR device
     config.adapter = "/dev/dvb/adapter" + str(config.adapter)
-    LOGGER.debug("about to open adapter %s, tuner %d devices", config.adapter, config.tuner)
-    with open(config.adapter + "/frontend" + str(config.tuner), "r+") as fefd, \
-         open(config.adapter + "/demux"    + str(config.tuner), "r+") as dmxfd, \
-         open(config.adapter + "/dvr"      + str(config.tuner), "rb") as dvrfd:
+    with open(config.adapter + "/frontend" + str(config.tuner), "r+") as fefd, open(
+        config.adapter + "/demux" + str(config.tuner), "r+"
+    ) as dmxfd, open(config.adapter + "/dvr" + str(config.tuner), "rb") as dvrfd:
 
         # the demux device needs to be opened non blocking
         flag = fcntl.fcntl(dvrfd, fcntl.F_GETFL)
@@ -354,39 +414,32 @@ def main():
 
         # set appropriate buffer size
         # MPEG-TS are chopped into (at most) 188 sections
-        ts_length = 188
+        ts_length = 189
         ts_buffer = ts_length * 2048
         LOGGER.debug("setting demuxer buffer size to %d", ts_buffer)
         if fcntl.ioctl(dmxfd, DMX_SET_BUFFER_SIZE, ts_buffer) != 0:
             LOGGER.error("DMX_SET_BUFFER_SIZE failed, aborting")
             exit(1)
 
+        # timeout for polling
+        timeout = config.step / len(config.frequencies)
+        LOGGER.debug("spending about %ds per frequency with data retrieval", timeout)
+
         # begin main loop
-        LOGGER.debug("starting main event loop")
         while True:
             # prepare message array for sending to carbon
             carbon_messages = []
             # iterate over all given frequency and modulation paris
             for tunable in config.frequencies:
-                # try tuning
-                if tune(fefd, tunable) != 0:
-                    break
-
-                # at this point, we can poll data from /dev/dvb/adapter0/dvr0,
-                # which we will promptly do, defining a 2s timeout
-                timeout = 2
+                # try to tune and start the filter process
                 count = 0
-
-                # start filtering
-                if start_demuxer(dmxfd) != 0:
+                if tune(fefd, tunable) != 0 or start_demuxer(dmxfd) != 0:
                     break
 
+                # make sure we spend at most (step / number of frequencies) second per frequency
                 start_time = timeit.default_timer()
                 end_time = start_time
-                # make sure we spend at most (step / number of frequencies) second per frequency
-                LOGGER.debug("spending about %ds with data retrieval",
-                             config.step / len(config.frequencies))
-                while (end_time - start_time) < (config.step / len(config.frequencies)):
+                while (end_time - start_time) < timeout:
                     # interrupting a poll() system call will cause a traceback
                     # using try/except will suppress that for SIGTERM, but not for SIGINT
                     # (Python got it"s own SIGINT handler)
@@ -403,9 +456,8 @@ def main():
                             data = dvrfd.read(ts_buffer)
                             count += len(data)
                             end_time = timeit.default_timer()
-                            elapsed = (end_time - start_time)
                 # record final end time
-                elapsed = (timeit.default_timer() - start_time)
+                elapsed = timeit.default_timer() - start_time
 
                 # stop filtering
                 if stop_demuxer(dmxfd) != 0:
@@ -416,17 +468,32 @@ def main():
                     m_type = "qam256"
                 else:
                     m_type = "qam64"
-                carbon_messages.append("{}.{}.{} {} {}".format(config.prefix, m_type, \
-                                    tunable.frequency, (count/elapsed), int(time.time())))
+                carbon_messages.append(
+                    "{}.{}.{} {} {}".format(
+                        config.prefix,
+                        m_type,
+                        tunable.frequency,
+                        (count / elapsed),
+                        int(time.time()),
+                    )
+                )
                 # for debugging purposes, output data
-                LOGGER.debug("frequency %d: spent %fs, got %d packets (%d bytes) equaling a rate" \
-                             "of %fkBit/s", tunable.frequency, elapsed, len(data)/ts_length, \
-                             len(data), (count*8)/elapsed/1024)
+                LOGGER.debug(
+                    "frequency %d: spent %fs, got %d packets (%d bytes) equaling a rate"
+                    "of %fkBit/s",
+                    tunable.frequency,
+                    elapsed,
+                    len(data) / ts_length,
+                    len(data),
+                    (count * 8) / elapsed / 1024,
+                )
             # send data
             for msg in carbon_messages:
                 LOGGER.debug("sending to carbon: %s", msg)
-                sock.sendto((msg + "\n").encode(), (config.carbon_host, config.carbon_port))
+                sock.sendto(
+                    (msg + "\n").encode(), (config.carbon_host, config.carbon_port)
+                )
+
 
 if __name__ == "__main__":
-    LOGGER = logging.getLogger()
     main()
